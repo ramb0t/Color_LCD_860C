@@ -1,5 +1,5 @@
 
-Color LCD 860C display for TSDZ2 Open Source Firmware v20.1C.4
+Color LCD 860C display for TSDZ2 Open Source Firmware v20.1C.5-2
 
 Assistance mode available
 	Power assist
@@ -21,13 +21,17 @@ Display Menus (* new items)
 	Reset trip B
 
   *Bike
-	Max speed
-	Circumference
-	Max power limit
+	Wheel circumference
 	Assist with error
+	Hotkey
+	Street mode
+	Enable at startup
+	Edit mode
+	Max speed
+	Max power
 	Throttle
 	Cruise
-	Password enable (no / yes)
+	Password enable
 	Password
 	Confirm
 	Reset
@@ -40,16 +44,21 @@ Display Menus (* new items)
 	Voltage est
 	Resistance est
 	Power loss est
+	*Charge cycles
 
   SOC
-	Text
+	Text 1
+	*Text 2
+	*Text 3
 	*Calculation
 	Reset at voltage
 	Battery total Wh
 	Used Wh
 	*Manual reset
 	*Auto reset %
-	*Charge cycles
+	*Distance for avg Wh
+	*Percentage of avg Wh
+	*Wh/unit distance
 
   Motor
 	Motor voltage
@@ -58,6 +67,7 @@ Display Menus (* new items)
 	*Motor deceleration
 	*Field weakening
 	*Overcurrent delay
+	*PWM frequency
 
   Torque sensor
 	Assist w/o pedal
@@ -84,6 +94,7 @@ Display Menus (* new items)
 	*Power assist
 		*Level 1
 		*Level x
+		(Assistance values for all modes from 1 to 255)
 	*Torque assist
 		*Level 1
 		*Level x
@@ -94,36 +105,52 @@ Display Menus (* new items)
 		*Based on (torque/power)
 		*Level 1
 		*Level x
-	Assistance values for all modes from 1 to 254
+	*Torque modes on (current/power)
+	*Ref.voltage
 
   Walk assist
 	*Speed 1
 	*Speed x
 
   Startup boost
+	Feature (disable/enable)
 	*Boost torque factor
 	*Boost cadence step
-	*Boost at zero (cadence/speed)
-	*Startup assist
-	*Smooth start
+	*Boost at zero (cadence/speed/auto)
+	*Startup assist (disable/manual/semi-aut/auto/extended)
+	*Startup assist time
+	*Auto start.timeout
+	*Auto start.threshold
+	*Smooth start (disable/enable)
 	*Smooth start ramp
+	*Extended boost (disable/enable)
+	*Extended boost mul
+	*Ext.boost ramp down
+	*Ext.boost threshold
 
-  Motor temperature
+  Throttle/Temperature
 	Feature
 	Min limit
 	Max limit
 	*Units
 	*Sensor type
 	*Brake
+	Virtual throttle step
 
-  Street mode
-	Enable Mode
-	Enable at startup
-	Speed limit
-	Motor power limit
-	*Throttle
-	*Cruise
-	Hotkey enable
+  Variables
+	Speed
+	*Efficiency
+	Cadence
+	human power
+	motor power
+	batt voltage
+	batt current
+	battery soc
+	motor current (deleted)
+	motor temp
+	motor speed
+	motor pwm (deleted)
+	motor foc (deleted)
 
   Various
 	*History errors
@@ -136,11 +163,11 @@ Display Menus (* new items)
 		*Time since err 3
 		*Time since err 4
 		*Reset
+	*Lights
 	*Light sensor
 	*Light sensitivity %
 	*Light hysteresis %
 	*Lights configuration
-	Virtual throttle step
 	Odometer
 	*A service
 	*A service distance
@@ -154,13 +181,12 @@ Display Menus (* new items)
 	Brightness on
 	Brightness off
 	Buttons invert
-	*Config shortcut key
 	Auto power off
 	Units
 	LCD type
 	Reset to defaults
 	*Confirm reset
-	*OSF motor  v20.1C-5.1
+	*OSF motor  v20.1C-5.2
 
   Technical (view only)
 	ADC battery current
@@ -206,6 +232,7 @@ Warning msg
   Temp Shutdown
   Voltage cut-off
   Speed limit
+  Low efficiency
 
 Function msg
   BRAKE

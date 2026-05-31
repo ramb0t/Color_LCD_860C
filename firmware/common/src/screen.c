@@ -2159,7 +2159,7 @@ bool screenOnPress(buttons_events_t events) {
 	if (!handled)
 		handled |= onPressScrollable(events);
 
-	if((!handled)&&((!ui_vars.ui8_config_shortcut_key_enabled)||(!ui_vars.ui8_assist_level)))
+	if (!handled && !ui_vars.ui8_assist_level)
 		handled |= onPressCustomizing(events);
 
 	if (!handled && curScreen && curScreen->onPress)
@@ -2501,7 +2501,8 @@ void screen_init(void) {
   wheelSpeedIntegerField.rw->visibility = FieldVisible;
 #endif
   fieldAlternate.rw->visibility = FieldNotVisible;
-
+  
+  /*
   ui_vars.ui16_street_mode_power_limit = ui_vars.ui8_street_mode_power_limit_div25 * 25;
   ui_vars.ui16_target_max_battery_power = ui_vars.ui8_target_max_battery_power_div25 * 25;
   ui_vars.ui16_motor_power_limit = ui_vars.ui8_motor_power_limit_div25 * 25;
@@ -2514,7 +2515,8 @@ void screen_init(void) {
 	// ?
     ui_vars.ui8_street_mode_power_limit_div25 = (ui_vars.ui16_street_mode_power_limit / 25);
   }
-
+  */
+  
   // init the pointers
   wheelSpeedField.rw->editable.number.auto_thresholds = &g_vars[VarsWheelSpeed].auto_thresholds;
   wheelSpeedField.rw->editable.number.config_warn_threshold = &g_vars[VarsWheelSpeed].config_warn_threshold;

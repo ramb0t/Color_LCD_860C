@@ -22,7 +22,8 @@
 #define EEPROM_0x43_VERSION 0x43
 #define EEPROM_0x44_VERSION 0x44
 #define EEPROM_0x50_VERSION 0x50
-#define EEPROM_VERSION 0x51
+#define EEPROM_0x51_VERSION 0x51
+#define EEPROM_VERSION 0x52
 
 typedef struct {
   graph_auto_max_min_t auto_max_min;
@@ -43,17 +44,19 @@ typedef struct eeprom_data {
 	uint8_t ui8_wheel_max_speed;
 	uint32_t ui32_wh_x10_offset;
 	uint32_t ui32_wh_x10_100_percent;
-	uint8_t ui8_battery_soc_enable;
-	uint8_t ui8_target_max_battery_power_div25;
+	//uint8_t ui8_battery_soc_enable;
+	uint8_t ui8_startup_boost_at_zero; // replaces ui8_battery_soc_enable
+	uint8_t ui8_target_max_battery_power_div25; // for previous versions only
 	uint8_t ui8_battery_max_current;
 	uint8_t ui8_motor_max_current; // CHECK
-	uint8_t ui8_motor_current_min_adc; // NOT USED
+	//uint8_t ui8_motor_current_min_adc;
+	uint8_t ui8_auto_startup_assist_time; // replaces ui8_motor_current_min_adc
 	uint16_t ui16_battery_low_voltage_cut_off_x10;
 	uint8_t ui8_assist_level_factor[4][ASSIST_LEVEL_NUMBER];
 	uint8_t ui8_number_of_assist_levels;
 	uint8_t ui8_optional_ADC_function;
-	uint8_t ui8_motor_temperature_min_value_to_limit;
-	uint8_t ui8_motor_temperature_max_value_to_limit;
+	uint8_t ui8_motor_temperature_min_limit_value;
+	uint8_t ui8_motor_temperature_max_limit_value;
 	uint16_t ui16_battery_voltage_reset_wh_counter_x10;
 	uint8_t ui8_lcd_power_off_time_minutes;
 	uint8_t ui8_lcd_backlight_on_brightness;
@@ -182,7 +185,11 @@ typedef struct eeprom_data {
 	uint32_t ui32_wh_x10_total_offset;
  	uint16_t ui16_service_a_distance;
 	uint16_t ui16_service_b_distance;
-	uint16_t ui16_service_b_time; // not used, do not delete
+	//uint16_t ui16_service_b_time;
+#endif
+	uint8_t ui8_adc_throttle_min_value; // replaces ui16_service_b_time byte 0
+	uint8_t ui8_adc_throttle_max_value; // replaces ui16_service_b_time byte 1
+#ifndef SW102 
 	uint8_t ui8_service_a_distance_enable;
 	uint8_t ui8_service_b_distance_enable;
 #endif
@@ -208,6 +215,7 @@ typedef struct eeprom_data {
 #if defined(DISPLAY_860C) || defined(DISPLAY_860C_V12) || defined(DISPLAY_860C_V13)
 	uint8_t ui8_light_sensor_hysteresis;
 #endif
+// EEPROM_0x51_VERSION
 	uint8_t ui8_startup_assist_level;
 	uint8_t ui8_startup_ridimg_mode;
 	uint32_t ui32_last_errors;
@@ -221,6 +229,19 @@ typedef struct eeprom_data {
 	uint8_t ui8_motor_efficiency_warn_threshold;
 #endif
 	uint8_t ui8_battery_overcurrent_delay;
+// EEPROM_0x52_VERSION
+	uint8_t ui8_battery_soc_enable_array[3];
+	uint16_t ui16_battery_energy_avg_Wh_calc_x100;
+	uint8_t ui8_distance_for_avg_Wh_calc;
+	uint8_t ui8_Wh_avg_percentage;
+	uint16_t ui16_Wh_for_unit_distance;
+	uint8_t ui8_startup_assist_feature_enabled;
+	uint8_t ui8_extended_boost_multiplier;
+	uint8_t ui8_extended_boost_threshold;
+	uint8_t ui8_auto_startup_assist_threshold;
+	uint8_t ui8_power_based_reference_voltage;
+	uint8_t ui8_extended_boost_ramp_down;
+	uint8_t ui8_auto_startup_assist_timeout;
 
 // FIXME align to 32 bit value by end of structure and pack other fields
 } eeprom_data_t;
@@ -257,15 +278,21 @@ void eeprom_init_defaults(void);
 #endif
 #define DEFAULT_VALUE_WH_X10_TOTAL_OFFSET							0
 #define DEFAULT_VALUE_WH_X10_OFFSET                                 0
-#define DEFAULT_VALUE_HW_X10_100_PERCENT                            4000 // default to a battery of 400 Wh
-#define DEAFULT_VALUE_SHOW_NUMERIC_BATTERY_SOC                      1 // // 0=none 1=SOC 2=volts
+#define DEFAULT_VALUE_WH_X10_100_PERCENT                            5000 // default to a battery of 500 Wh
+#define DEFAULT_VALUE_WH_KM_AVERAGE_X100							500
+#define DEFAULT_VALUE_DISTANCE_FOR_WH_KM							100
+#define DEFAULT_VALUE_WH_AVG_PERCENT								50
+#define DEFAULT_VALUE_WH_AVG_LEVEL									500
+#define DEAFULT_VALUE_SHOW_NUMERIC_BATTERY_SOC_0                    1 // // 0=none 1=SOC 2=volts 3=distance
+#define DEAFULT_VALUE_SHOW_NUMERIC_BATTERY_SOC_1                    3 // // 0=none 1=SOC 2=volts 3=distance
+#define DEAFULT_VALUE_SHOW_NUMERIC_BATTERY_SOC_2                    2 // // 0=none 1=SOC 2=volts 3=distance
 #define DEAFULT_VALUE_TIME_FIELD                                    1 // 1 i show clock
 #define DEFAULT_VALUE_BATTERY_MAX_CURRENT                           16 // 16 amps
 #define DEFAULT_VALUE_MOTOR_MAX_CURRENT                             16 // 16 amps NOT USED
 #define DEFAULT_VALUE_CURRENT_MIN_ADC                               0 // 1 unit, 0.156 A
 #define DEFAULT_VALUE_BATTERY_OVERCURRENT_DELAY                     2 // * 25ms
-#define DEFAULT_VALUE_MOTOR_POWER_LIMIT                             20 // 20 * 25 = 500
-#define DEFAULT_VALUE_TARGET_MAX_BATTERY_POWER                      20 // 20 * 25 = 500, 0 is disabled
+#define DEFAULT_VALUE_MOTOR_POWER_LIMIT_DIV25                       20 // 20 * 25 = 500
+#define DEFAULT_VALUE_TARGET_MAX_BATTERY_POWER_DIV25                20 // 20 * 25 = 500, 0 is disabled
 #define DEFAULT_VALUE_BATTERY_LOW_VOLTAGE_CUT_OFF_X10               420 // 52v battery, LVC = 42.0 (3.0 * 14)
 #define DEFAULT_VALUE_BATTERY_VOLTAGE_CALIBRATE_PERCENT_X10			1000 // displayed voltage 
 #define DEFAULT_VALUE_BATTERY_SOC_PERCENT_CALCULATION				0  // 0=Auto 1=Wh 2=Volts
@@ -335,33 +362,44 @@ void eeprom_init_defaults(void);
 #define DEFAULT_VALUE_WALK_ASSIST_LEVEL_FACTOR_8                    45
 #define DEFAULT_VALUE_WALK_ASSIST_LEVEL_FACTOR_9                    50
 
+#define DEFAULT_VALUE_EXTENDED_BOOST_FEATURE_ENABLED				0
+#define DEFAULT_VALUE_EXTENDED_BOOST_MULTIPLIER						2
+#define DEFAULT_VALUE_EXTENDED_BOOST_THRESHOLD						3
+#define DEFAULT_VALUE_EXTENDED_BOOST_RAMP_DOWN						3
 #define DEFAULT_VALUE_STARTUP_MOTOR_POWER_BOOST_FEATURE_ENABLED     1
 #define DEFAULT_VALUE_STARTUP_BOOST_TORQUE_FACTOR					300
 #define DEFAULT_VALUE_STARTUP_BOOST_CADENCE_STEP					20
-#define DEFAULT_VALUE_STARTUP_BOOST_AT_ZERO							0 // 0=cadence 1=speed
+#define DEFAULT_VALUE_STARTUP_BOOST_AT_ZERO							2 // 0=cadence 1=speed 2=auto
 #define DEFAULT_VALUE_SMOOTH_START_ENABLED							1
 #define DEFAULT_VALUE_SMOOTH_START_COUNTER_SET						35 // 35% = 4.2 sec
 #define DEFAULT_VALUE_eMTB_BASED_ON_POWER							1
+#define DEFAULT_VALUE_TORQUE_MODES_BASED_ON_POWER					0
+#define DEFAULT_VALUE_POWER_BASED_REFERENCE_VOLTAGE					36
 #define DEFAULT_VALUE_THROTTLE_FEATURE_ENABLED						0
 #define DEFAULT_VALUE_STARTUP_ASSIST_FEATURE_ENABLED     			0
-#define DEFAULT_VALUE_PASSWORD_ENABLED                              1
+#define DEFAULT_VALUE_AUTO_STARTUP_ASSIST_TIME						10 // 1.0 second, max 5.0
+#define DEFAULT_VALUE_AUTO_STARTUP_ASSIST_TIMEOUT					5  // 0.5 second, max 2.0
+#define DEFAULT_VALUE_AUTO_STARTUP_ASSIST_THRESHOLD					10 // from 5 to 20
+#define DEFAULT_VALUE_PASSWORD_ENABLED                              1	
 #define DEFAULT_VALUE_PASSWORD_CHANGED                              0
 #define DEFAULT_VALUE_RESET_PASSWORD	                            0
 #define DEFAULT_VALUE_PASSWORD                                      1000
 
 #define DEFAULT_VALUE_OPTIONAL_ADC_FUNCTION              			0 // 0=not used 1=temperature control 2=throttle control
-#define DEFAULT_VALUE_MOTOR_TEMPERATURE_MIN_VALUE_LIMIT             65 // 65 degrees celsius
-#define DEFAULT_VALUE_MOTOR_TEMPERATURE_MAX_VALUE_LIMIT             85 // 85 degrees celsius
+#define DEFAULT_VALUE_ADC_THROTTLE_MIN_LIMIT						47
+#define DEFAULT_VALUE_ADC_THROTTLE_MAX_LIMIT						176
+#define DEFAULT_VALUE_MOTOR_TEMPERATURE_MIN_LIMIT             		65 // 65 degrees celsius
+#define DEFAULT_VALUE_MOTOR_TEMPERATURE_MAX_LIMIT             		85 // 85 degrees celsius
 #define DEFAULT_VALUE_SCREEN_TEMPERATURE							0 // 0=AUTO 1=CELSIUS 2=FARENHEIT		
 #define DEFAULT_VALUE_TEMPERATURE_SENSOR_TYPE						0 // 0=LM35 1=TMP36
 #define DEFAULT_VALUE_BRAKE_INPUT									0 // 0=BRAKE 1=TEMPERATURE
 
-#define DEFAULT_VALUE_BATTERY_VOLTAGE_RESET_WH_COUNTER_X10          584 // 52v battery, 58.4 volts at fully charged
+#define DEFAULT_VALUE_BATTERY_VOLTAGE_RESET_WH_COUNTER_X10          574 // 52v battery, 58.4 volts at fully charged
 #define DEFAULT_VALUE_LCD_POWER_OFF_TIME                            30 // 30 minutes, each unit 1 minute
 
 #ifdef SW102
 #define DEFAULT_VALUE_LCD_BACKLIGHT_ON_BRIGHTNESS                   80 //
-#define DEFAULT_VALUE_LCD_BACKLIGHT_OFF_BRIGHTNESS                  20 //
+#define DEFAULT_VALUE_LCD_BACKLIGHT_OFF_BRIGHTNESS                  40 //
 #else
 #define DEFAULT_VALUE_LCD_BACKLIGHT_ON_BRIGHTNESS                   20 //
 #define DEFAULT_VALUE_LCD_BACKLIGHT_OFF_BRIGHTNESS                  80
@@ -375,13 +413,13 @@ void eeprom_init_defaults(void);
 
 #define DEFAULT_VALUE_ODOMETER_X10                                  0
 #define DEFAULT_VALUE_BUTTONS_UP_DOWN_INVERT                        0 // regular state
-#define DEFAULT_VALUE_CONFIG_SHORTCUT_KEY_ENABLED	                1 
+#define DEFAULT_VALUE_LIGHTS_ENABLED				                1 
 #define DEFAULT_VALUE_X_AXIS_SCALE                                  0 // 15m
 #define DEFAULT_STREET_MODE_FUNCTION_ENABLE                         1 // enabled
 #define DEFAULT_STREET_MODE_ENABLE_AT_STARTUP                       1 // enabled
-#define DEFAULT_STREET_MODE_ENABLE                                  0 // disabled
+#define DEFAULT_STREET_MODE_ENABLE                                  1 // enabled
 #define DEFAULT_STREET_MODE_SPEED_LIMIT                             25 // 25 km/h
-#define DEFAULT_STREET_MODE_POWER_LIMIT                             20 // MAX 500W --> 500 / 25 = 20
+#define DEFAULT_STREET_MODE_POWER_LIMIT_DIV25                       20 // MAX 500W --> 500 / 25 = 20
 #define DEFAULT_STREET_MODE_THROTTLE_ENABLE                         0 // disabled
 #define DEFAULT_STREET_MODE_CRUISE_ENABLE                         	0 // disabled
 #define DEFAULT_STREET_MODE_HOTKEY_ENABLE                           0 // disabled
@@ -417,9 +455,9 @@ void eeprom_init_defaults(void);
 #define DEFAULT_VALUE_TRIP_MAX_SPEED                                 0
 
 #ifndef SW102
-#define DEFAULT_VALUE_MOTOR_EFFICIENCY_AUTO_TRESHOLDS				2 // 0=DISABLED 1=MANUAL 2=AUTO
-#define DEFAULT_VALUE_MOTOR_EFFICIENCY_ERROR_TRESHOLD				58 // %
-#define DEFAULT_VALUE_MOTOR_EFFICIENCY_WARN_TRESHOLD				68 // %
+#define DEFAULT_VALUE_MOTOR_EFFICIENCY_AUTO_THRESHOLDS				2 // 0=DISABLED 1=MANUAL 2=AUTO
+#define DEFAULT_VALUE_MOTOR_EFFICIENCY_ERROR_THRESHOLD				58 // %
+#define DEFAULT_VALUE_MOTOR_EFFICIENCY_WARN_THRESHOLD				68 // %
 #endif
 
 #define DEFAULT_BIT_DATA_1 (DEFAULT_VALUE_UNITS_TYPE | \
@@ -431,6 +469,7 @@ void eeprom_init_defaults(void);
 (DEFAULT_VALUE_LIGHT_SENSOR_ENABLED << 6) | \
 (DEFAULT_VALUE_WALK_ASSIST_FEATURE_ENABLED << 7))
 
+// << 3 available
 #define DEFAULT_BIT_DATA_2 (DEFAULT_VALUE_BUTTONS_UP_DOWN_INVERT | \
 (DEFAULT_TORQUE_SENSOR_CALIBRATION_FEATURE_ENABLE << 1) | \
 (DEFAULT_VALUE_ASSIST_WITH_ERROR << 2) | \
@@ -441,14 +480,13 @@ void eeprom_init_defaults(void);
 (DEFAULT_STREET_MODE_HOTKEY_ENABLE << 7))
 
 #define DEFAULT_BIT_DATA_3	(DEFAULT_VALUE_PASSWORD_ENABLED | \
-(DEFAULT_VALUE_CONFIG_SHORTCUT_KEY_ENABLED << 1) | \
+(DEFAULT_VALUE_LIGHTS_ENABLED << 1) | \
 (DEFAULT_VALUE_FIELD_WEAKENING_FEATURE_ENABLED << 2) | \
-(DEFAULT_VALUE_STARTUP_ASSIST_FEATURE_ENABLED << 3) | \
-(DEFAULT_VALUE_STARTUP_BOOST_AT_ZERO << 4) | \
+(DEFAULT_VALUE_TORQUE_MODES_BASED_ON_POWER << 3) | \
+(DEFAULT_VALUE_EXTENDED_BOOST_FEATURE_ENABLED << 4) | \
 (DEFAULT_VALUE_BRAKE_INPUT << 5) | \
 (DEFAULT_VALUE_RESET_PASSWORD << 6) | \
 (DEFAULT_VALUE_PASSWORD_CHANGED << 7))
-
 
 // *************************************************************************** //
 

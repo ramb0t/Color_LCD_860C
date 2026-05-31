@@ -2,9 +2,29 @@
 
 #include "screen.h"
 
+// Error state
+#define NO_ERROR                                0	// "None"
+#define ERROR_NOT_INIT                          1	// "Motor not init"
+#define ERROR_TORQUE_SENSOR                     2	// "Torque Fault"
+#define ERROR_CADENCE_SENSOR		    		3	// "Cadence fault"
+#define ERROR_MOTOR_BLOCKED     				4	// "Motor Blocked"
+#define ERROR_THROTTLE						 	5	// "Throttle Fault"
+#define ERROR_FATAL                             6	// "Fatal error" or  "Undervoltage"
+#define ERROR_BATTERY_OVERCURRENT               7	// "Overcurrent"
+#define ERROR_SPEED_SENSOR	                    8	// "Speed fault"
+#define ERROR_UNDERVOLTAGE						9   // "Undervoltage"
+
+// TSDZ2 20.1
+#define WALK_ASSIST_THRESHOLD_SPEED_X10			70  // 70 -> 7.0 km/h
+#define CRUISE_THRESHOLD_SPEED_X10				90  // 90 -> 9.0 km/h
+#define WARNING_MESSAGE_MIN_TIME				30  // x0.1 sec
+#define LOW_EFFICIENCY_MIN_TIME					120  // x0.1 sec
+
 extern volatile uint8_t ui8_battery_soc_used[100];
 extern volatile uint8_t ui8_battery_soc_index;
 extern volatile uint8_t ui8_waiting_voltage_ready_counter;
+extern volatile uint8_t ui8_motorErrorsIndex;
+extern volatile uint8_t ui8_startup_assist_speed_limit;
 
 #ifndef SW102
 // for calculate Wh trip A and B
@@ -56,6 +76,7 @@ extern Field
   motorFOCField,
   //motorTempGraph,
   motorEfficiencyField,
+  motorFieldWeakeningField,
   bootStatus2,
 #ifdef SW102
   custom1, custom2,

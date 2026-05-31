@@ -45,13 +45,14 @@ static uint8_t ui8_adc_torque_calibration_offset = ADC_TORQUE_SENSOR_CALIBRATION
 static uint8_t ui8_adc_torque_middle_offset_adj = ADC_TORQUE_SENSOR_MIDDLE_OFFSET_ADJ;
 static uint8_t ui8_adc_pedal_torque_angle_adj_array[41] = {160, 138, 120, 107, 96, 88, 80, 74, 70, 66, 63, 59, 56, 52,
 			50, 47, 44, 42, 39, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16 };
-static uint16_t ui16_battery_voltage_soc_x10_temp = 0;
-uint16_t filter(uint16_t ui16_new_value, uint16_t ui16_old_value, uint8_t ui8_alpha);
 volatile uint8_t ui8_trip_started = 0;
 static uint8_t ui8_calc_avg_speed_flag = 1;
 volatile uint8_t ui8_voltage_cut_off_flag = 0;
 volatile uint8_t ui8_voltage_shutdown_flag = 0;
 volatile uint8_t ui8_speed_limit_high_flag = 0;
+volatile uint8_t ui8_pwm_frequency_flag = 0;
+volatile uint8_t ui8_walk_assist_state = 0;
+volatile uint8_t ui8_cruise_state = 0;
 
 static uint8_t ui8_m_usart1_received_first_package = 0;
 static uint8_t ui8_battery_soc_init_flag = 0;
@@ -90,7 +91,7 @@ void set_lcd_backlight() {
 					ui_vars.ui8_lcd_backlight_on_brightness :
 					ui_vars.ui8_lcd_backlight_off_brightness);
 }
-
+/*
 static uint16_t fake(uint16_t minv, uint16_t maxv) {
 	static uint16_t seed = 1; // Just generate some slightly increasing data, scaled to fit the required range
 
@@ -121,9 +122,8 @@ static uint16_t fakeRandom(uint32_t *storage, uint16_t minv, uint16_t maxv) {
     return *storage;
 }
 
-/**
- * Pretend we just received a randomized motor packet
- */
+// * Pretend we just received a randomized motor packet
+
 void parse_simmotor() {
   static uint32_t counter;
 
@@ -161,7 +161,7 @@ void parse_simmotor() {
 		rt_vars.ui8_motor_temperature = fakeWave(&tempstore, 20, 120);
 	}
 	else if (rt_vars.ui8_optional_ADC_function == THROTTLE_CONTROL) {
-		rt_vars.ui8_throttle = fake(0, 100);
+		rt_vars.ui8_throttle_adc_map = fake(0, 100);
 	}
 
 	rt_vars.ui16_adc_pedal_torque_sensor = fake(0, 1023);
@@ -172,7 +172,7 @@ void parse_simmotor() {
 
 	rt_vars.ui8_duty_cycle = fake(0, 100);
 	
-	//rt_vars.ui8_motor_efficiency = fake(0, 100);
+	rt_vars.ui8_motor_efficiency = fake(0, 100);
 			
 	rt_vars.ui16_motor_speed_erps = fake(0, 600);
 
@@ -188,7 +188,8 @@ void parse_simmotor() {
         diststore -= rt_vars.ui16_wheel_perimeter;
     }
 }
-
+*/
+ 
 void rt_send_tx_package(frame_type_t type) {
   uint8_t crc_len = 3; // minimun is 3
   uint8_t *ui8_usart1_tx_buffer = uart_get_tx_buffer();
@@ -213,19 +214,21 @@ void rt_send_tx_package(frame_type_t type) {
 				ui8_temp = rt_vars.ui8_assist_level_factor[POWER_MODE][(rt_vars.ui8_assist_level - 1)];
 			
 			// for compatibility with v20.1C-4.3 motor
-			if((rt_vars.ui8_riding_mode == eMTB_MODE) && (g_tsdz2_firmware_version.patch == 43))
+			// warning XXXX_MODE start from 0, ui8_riding_mode start from 1
+			// so eMTB_MODE = 3, rt_vars.ui8_riding_mode = 4 (riding mode = eMTB)
+			if((rt_vars.ui8_riding_mode == 4) && (g_tsdz2_firmware_version.patch == 43))
 				ui8_temp = (uint8_t)((uint16_t)(ui8_temp * 10) / 127);
 			
 			ui8_usart1_tx_buffer[3] = ui8_temp;
 			
-#define MOTOR_TEST	0
-#if MOTOR_TEST
-			// assist level used for manual FOC during motor tests
-			ui8_usart1_tx_buffer[4] = rt_vars.ui8_assist_level;
-#else
-			// hybrid torque parameter
-			ui8_usart1_tx_buffer[4] = rt_vars.ui8_assist_level_factor[TORQUE_MODE][(rt_vars.ui8_assist_level - 1)];
-#endif
+			// for motor test with home trainer (not hybrid mode)
+			if(rt_vars.ui8_riding_mode < 5)
+				// assist level used for manual FOC during motor tests
+				ui8_usart1_tx_buffer[4] = rt_vars.ui8_assist_level;
+			else
+				// hybrid torque parameter
+				ui8_usart1_tx_buffer[4] = rt_vars.ui8_assist_level_factor[TORQUE_MODE][(rt_vars.ui8_assist_level - 1)];
+				
 			// walk assist parameter
 			ui8_usart1_tx_buffer[7] = rt_vars.ui8_walk_assist_level_factor[(rt_vars.ui8_assist_level - 1)];
 		}
@@ -236,16 +239,24 @@ void rt_send_tx_package(frame_type_t type) {
 			ui8_usart1_tx_buffer[7] = 0;
 		}
 		
-		uint8_t ui8_walk_assist_state = 0;
-		if ((rt_vars.ui8_assist_level)&&(ui_vars.ui8_walk_assist_feature_enabled))
+		ui8_walk_assist_state = 0;
+		if ((rt_vars.ui8_assist_level)&&(ui_vars.ui8_walk_assist_feature_enabled)) {
 			ui8_walk_assist_state = rt_vars.ui8_walk_assist; 
-		
-		uint8_t ui8_cruise_state = rt_vars.ui8_walk_assist;
-		if (((rt_vars.ui8_street_mode_enabled)&&(!rt_vars.ui8_street_mode_cruise_enabled))
-		  ||(!rt_vars.ui8_cruise_feature_enabled)
-		  ||(!rt_vars.ui8_assist_level))
-				ui8_cruise_state = 0;
-		
+		}
+		if ((rt_vars.ui8_walk_assist)
+		  &&(((rt_vars.ui8_cruise_feature_enabled)&&(!rt_vars.ui8_street_mode_enabled))
+			||((rt_vars.ui8_street_mode_cruise_enabled)&&(rt_vars.ui8_street_mode_enabled)))) {
+				if (ui_vars.ui16_wheel_speed_x10 >= CRUISE_THRESHOLD_SPEED_X10) {
+					ui8_cruise_state = 1;
+				}
+		}
+		else {
+			ui8_cruise_state = 0;
+		}
+		if (ui8_cruise_state) {
+			ui8_walk_assist_state = 0;
+		}
+	
 		uint8_t ui8_assist_level_state = 0;
 		if (rt_vars.ui8_assist_level)
 			ui8_assist_level_state = 1;
@@ -276,7 +287,8 @@ void rt_send_tx_package(frame_type_t type) {
 			ui8_usart1_tx_buffer[6] = rt_vars.ui8_street_mode_power_limit_div25;
 		}
 		else {
-			ui8_usart1_tx_buffer[6] = rt_vars.ui8_target_max_battery_power_div25;
+			//ui8_usart1_tx_buffer[6] = rt_vars.ui8_target_max_battery_power_div25;
+			ui8_usart1_tx_buffer[6] = rt_vars.ui8_motor_power_limit_div25;
 		}
 		
 		// riding mode
@@ -285,24 +297,31 @@ void rt_send_tx_package(frame_type_t type) {
 		// wheel max speed
 		if(((rt_vars.ui8_throttle_feature_enabled == WP_6KM_H_ONLY)
 			&&(!rt_vars.ui8_street_mode_enabled)
-			&&((rt_vars.ui8_throttle)||(rt_vars.ui8_throttle_virtual))
+			&&((rt_vars.ui8_throttle_adc_map)||(rt_vars.ui8_throttle_virtual))
 			&&(!rt_vars.ui8_pedal_cadence))
 		  ||((rt_vars.ui8_throttle_feature_enabled == WP_6KM_H_AND_PEDALING)
 			&&(rt_vars.ui16_wheel_speed_x10 > SPEED_LIMIT_WITHOUT_PEDALING_x10)
 			&&(!rt_vars.ui8_street_mode_enabled)
-			&&((rt_vars.ui8_throttle)||(rt_vars.ui8_throttle_virtual))
+			&&((rt_vars.ui8_throttle_adc_map)||(rt_vars.ui8_throttle_virtual))
 			&&(!rt_vars.ui8_pedal_cadence))
 		  ||((rt_vars.ui8_street_mode_throttle_enabled == WP_6KM_H_ONLY)
 			&&(rt_vars.ui8_street_mode_enabled)
-			&&((rt_vars.ui8_throttle)||(rt_vars.ui8_throttle_virtual))
+			&&((rt_vars.ui8_throttle_adc_map)||(rt_vars.ui8_throttle_virtual))
 			&&(!rt_vars.ui8_pedal_cadence))
 		  ||((rt_vars.ui8_street_mode_throttle_enabled == WP_6KM_H_AND_PEDALING)
 			&&(rt_vars.ui16_wheel_speed_x10 > SPEED_LIMIT_WITHOUT_PEDALING_x10)
 			&&(rt_vars.ui8_street_mode_enabled)
-			&&((rt_vars.ui8_throttle)||(rt_vars.ui8_throttle_virtual))
+			&&((rt_vars.ui8_throttle_adc_map)||(rt_vars.ui8_throttle_virtual))
 			&&(!rt_vars.ui8_pedal_cadence))
-		  ||((ui_vars.ui8_walk_assist)&&(!ui8_cruise_state))
-		  ||(ui_vars.ui8_startup_assist)) {
+		  ||((ui8_walk_assist_state)&&(!ui8_cruise_state))
+		  ||((rt_vars.ui8_throttle_feature_enabled < UNCONDITIONAL)
+		    &&(!rt_vars.ui8_street_mode_enabled)
+			&&(ui8_startup_assist_speed_limit)
+			&&(!rt_vars.ui8_pedal_cadence))
+		  ||((rt_vars.ui8_street_mode_throttle_enabled < UNCONDITIONAL)
+			&&(rt_vars.ui8_street_mode_enabled)
+			&&(ui8_startup_assist_speed_limit)
+			&&(!rt_vars.ui8_pedal_cadence))) {
 			  ui8_usart1_tx_buffer[9] = SPEED_LIMIT_WITHOUT_PEDALING;
 		}
 		else if (rt_vars.ui8_street_mode_enabled) {
@@ -313,29 +332,31 @@ void rt_send_tx_package(frame_type_t type) {
 		}
 
 		// motor temperature limit function or throttle
-		if (rt_vars.ui8_optional_ADC_function == TEMPERATURE_CONTROL) {
-			ui8_usart1_tx_buffer[10] = TEMPERATURE_CONTROL;
-        }
-		else if (rt_vars.ui8_optional_ADC_function == THROTTLE_CONTROL) {
-			ui8_usart1_tx_buffer[10] = THROTTLE_CONTROL;
+		switch (ui_vars.ui8_optional_ADC_function) {
+			case NOT_IN_USE:
+				ui8_usart1_tx_buffer[10] = NOT_IN_USE;
+			  break;
+			case TEMPERATURE_CONTROL:
+				ui8_usart1_tx_buffer[10] = TEMPERATURE_CONTROL;
+			  break;
+			case THROTTLE_CONTROL:
+				ui8_usart1_tx_buffer[10] = THROTTLE_CONTROL;
 			
-			if((!rt_vars.ui8_throttle_feature_enabled)
-			  ||((!rt_vars.ui8_street_mode_enabled)
-				&&(rt_vars.ui8_throttle_feature_enabled == WP_6KM_H_ONLY)
-				&&(rt_vars.ui16_wheel_speed_x10 > MAX_SPEED_WITHOUT_PEDALING_x10))
-			  ||((rt_vars.ui8_street_mode_enabled)
-				&&(!rt_vars.ui8_street_mode_throttle_enabled))
-			  ||((rt_vars.ui8_street_mode_enabled)
-				&&(rt_vars.ui8_street_mode_throttle_enabled == WP_6KM_H_ONLY)
-				&&(rt_vars.ui16_wheel_speed_x10 > MAX_SPEED_WITHOUT_PEDALING_x10))
-			  ||(!rt_vars.ui8_assist_level)) {
-				  ui8_usart1_tx_buffer[10] = NOT_IN_USE;
-			}
-        }
-		else {
-			ui8_usart1_tx_buffer[10] = NOT_IN_USE;
+				if((!rt_vars.ui8_throttle_feature_enabled)
+				  ||((!rt_vars.ui8_street_mode_enabled)
+					&&(rt_vars.ui8_throttle_feature_enabled == WP_6KM_H_ONLY)
+					&&(rt_vars.ui16_wheel_speed_x10 > MAX_SPEED_WITHOUT_PEDALING_x10))
+				  ||((rt_vars.ui8_street_mode_enabled)
+					&&(!rt_vars.ui8_street_mode_throttle_enabled))
+				  ||((rt_vars.ui8_street_mode_enabled)
+					&&(rt_vars.ui8_street_mode_throttle_enabled == WP_6KM_H_ONLY)
+					&&(rt_vars.ui16_wheel_speed_x10 > MAX_SPEED_WITHOUT_PEDALING_x10))
+				  ||(!rt_vars.ui8_assist_level)) {
+						ui8_usart1_tx_buffer[10] = NOT_IN_USE;
+				}
+			  break;
 		}
-	
+				
 		// virtual throttle
 		if((!rt_vars.ui8_throttle_feature_enabled)
 		  ||((!rt_vars.ui8_street_mode_enabled)
@@ -400,7 +421,7 @@ void rt_send_tx_package(frame_type_t type) {
 		  (rt_vars.ui8_startup_boost_at_zero & 1) << 1 |
 		  (rt_vars.ui8_smooth_start_enabled & 1) << 2 |
           (rt_vars.ui8_torque_sensor_calibration_feature_enabled & 1) << 3 |
-          (rt_vars.ui8_assist_whit_error_enabled & 1) << 4 |
+          (rt_vars.ui8_assist_with_error_enabled & 1) << 4 |
           (rt_vars.ui8_motor_assistance_startup_without_pedal_rotation & 1) << 5 |
           (rt_vars.ui8_motor_type & 1) << 6 |
 		  (rt_vars.ui8_eMTB_based_on_power & 1) << 7);
@@ -413,17 +434,29 @@ void rt_send_tx_package(frame_type_t type) {
 
 		// startup boost cadence step
 		ui8_usart1_tx_buffer[11] = rt_vars.ui8_startup_boost_cadence_step;
-
-		// motor over temperature min and max values to limit
-		if (rt_vars.ui8_temperature_sensor_type == TMP36) {
-			ui8_usart1_tx_buffer[12] = rt_vars.ui8_motor_temperature_min_value_to_limit + 50;
-			ui8_usart1_tx_buffer[13] = rt_vars.ui8_motor_temperature_max_value_to_limit + 50;
-		}
-		else {
-			ui8_usart1_tx_buffer[12] = rt_vars.ui8_motor_temperature_min_value_to_limit;
-			ui8_usart1_tx_buffer[13] = rt_vars.ui8_motor_temperature_max_value_to_limit;
-		}
 		
+		// throttle or temperature min and max values limit
+		switch (rt_vars.ui8_optional_ADC_function) {
+			case NOT_IN_USE:
+				ui8_usart1_tx_buffer[12] = 0;
+				ui8_usart1_tx_buffer[13] = 0;
+			  break;
+			case TEMPERATURE_CONTROL:
+				if (rt_vars.ui8_temperature_sensor_type == TMP36) {
+					ui8_usart1_tx_buffer[12] = rt_vars.ui8_motor_temperature_min_limit_value + 50;
+					ui8_usart1_tx_buffer[13] = rt_vars.ui8_motor_temperature_max_limit_value + 50;
+				}
+				else {
+					ui8_usart1_tx_buffer[12] = rt_vars.ui8_motor_temperature_min_limit_value;
+					ui8_usart1_tx_buffer[13] = rt_vars.ui8_motor_temperature_max_limit_value;
+				}
+			  break;
+			case THROTTLE_CONTROL:
+				ui8_usart1_tx_buffer[12] = rt_vars.ui8_adc_throttle_min_value;
+				ui8_usart1_tx_buffer[13] = rt_vars.ui8_adc_throttle_max_value;
+			  break;
+		}
+				
 		// motor acceleration adjustment
 		ui8_usart1_tx_buffer[14] = rt_vars.ui8_motor_acceleration_adjustment;
 		
@@ -441,6 +474,26 @@ void rt_send_tx_package(frame_type_t type) {
 		ui8_usart1_tx_buffer[56] = EEPROM_VERSION;
 		ui8_usart1_tx_buffer[57] = ui_vars.ui8_battery_overcurrent_delay;
 		
+		// startup boost mode 2 = AUTO
+		uint8_t ui8_startup_boost_auto = 0;
+		if (rt_vars.ui8_startup_boost_at_zero == 2) {
+			ui8_startup_boost_auto = 1;
+		}
+		// feature enabled
+		ui8_usart1_tx_buffer[58] = (ui8_startup_boost_auto & 1);
+		// bits available
+		
+		// startup assist min power
+		//ui8_usart1_tx_buffer[59] = ui_vars.ui8_startup_assist_min_power;
+		
+		// extended boost
+		ui8_usart1_tx_buffer[60] = rt_vars.ui8_extended_boost_multiplier;
+		ui8_usart1_tx_buffer[61] = rt_vars.ui8_extended_boost_threshold;
+		ui8_usart1_tx_buffer[63] = rt_vars.ui8_extended_boost_ramp_down;
+		
+		// torque modes power based, reference voltage
+		ui8_usart1_tx_buffer[62] = rt_vars.ui8_power_based_reference_voltage;
+		
 		// torque sensor offset set, for check the offset calibration
 		ui8_usart1_tx_buffer[76] = (uint8_t) (rt_vars.ui16_adc_pedal_torque_offset  & 0xff);
 		ui8_usart1_tx_buffer[77] = (uint8_t) (rt_vars.ui16_adc_pedal_torque_offset >> 8);
@@ -450,7 +503,9 @@ void rt_send_tx_package(frame_type_t type) {
 		
 		ui8_usart1_tx_buffer[80] = ((rt_vars.ui8_pedal_cadence_fast_stop & 1) |
 		  (rt_vars.ui8_field_weakening_feature_enabled & 1) << 1 |
-          (rt_vars. ui8_coast_brake_enable & 1) << 2);
+          (rt_vars.ui8_coast_brake_enable & 1) << 2 |
+		  (rt_vars.ui8_torque_modes_based_on_power & 1) << 3 |
+		  (rt_vars.ui8_extended_boost_enabled & 1) << 4);
           // free for future use
 		  
 
@@ -466,22 +521,6 @@ void rt_send_tx_package(frame_type_t type) {
 		
 		ui8_usart1_tx_buffer[84] = rt_vars.ui8_torque_sensor_adc_threshold;
 		
-		// calculate pedal torque ADC step for human power
-		uint16_t ui16_adc_pedal_torque_range_target_max = ADC_TORQUE_SENSOR_RANGE_TARGET_MIN
-			* (100 + rt_vars.ui8_adc_pedal_torque_range_adj) / 100;
-		
-		uint16_t ui16_adc_pedal_torque_delta_with_weight = (((((ADC_TORQUE_SENSOR_TARGET_WITH_WEIGHT * ADC_TORQUE_SENSOR_RANGE_TARGET_MIN) / ADC_TORQUE_SENSOR_RANGE_TARGET)
-			* (100 + rt_vars.ui8_adc_pedal_torque_range_adj) / 100)
-			* (ADC_TORQUE_SENSOR_TARGET_WITH_WEIGHT - ui8_adc_torque_calibration_offset + rt_vars.ui8_adc_pedal_torque_offset_adj
-			- ((((ui8_adc_torque_middle_offset_adj * 2) - ui8_adc_torque_calibration_offset - rt_vars.ui8_adc_pedal_torque_offset_adj) * ADC_TORQUE_SENSOR_TARGET_WITH_WEIGHT)
-			/ ADC_TORQUE_SENSOR_RANGE_TARGET))) / ADC_TORQUE_SENSOR_TARGET_WITH_WEIGHT);
-
-		ui8_pedal_torque_ADC_step_adv_calc_x100 = (uint8_t)((uint16_t)(((WEIGHT_ON_PEDAL_FOR_STEP_CALIBRATION * 167)
-			/ ((ui16_adc_pedal_torque_delta_with_weight * ui16_adc_pedal_torque_range_target_max)
-			/ (ui16_adc_pedal_torque_range_target_max - (((ui16_adc_pedal_torque_range_target_max - ui16_adc_pedal_torque_delta_with_weight) * 10)
-			/ ui8_adc_pedal_torque_angle_adj_array[rt_vars.ui8_adc_pedal_torque_angle_adj_index])))
-			* rt_vars.ui8_pedal_torque_per_10_bit_ADC_step_adv_x100) / PEDAL_TORQUE_PER_10_BIT_ADC_STEP_BASE_X100)) + 1;
-
 		crc_len = 86;
 		ui8_usart1_tx_buffer[1] = crc_len;
 		break;
@@ -536,7 +575,11 @@ void rt_low_pass_filter_battery_voltage_current_power(void) {
 	rt_vars.ui16_battery_current_filtered_x5 =
 			ui16_battery_current_accumulated_x5
 					>> BATTERY_CURRENT_FILTER_COEFFICIENT;
-
+	if (g_tsdz2_firmware_version.patch >= 52) {
+		// adc battery current (for Technical menu)
+		rt_vars.ui16_adc_battery_current = (rt_vars.ui16_battery_current_filtered_x5 * 20) / BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100;
+	}
+  
   // low pass filter motor current
   ui16_motor_current_accumulated_x5 -= ui16_motor_current_accumulated_x5
       >> MOTOR_CURRENT_FILTER_COEFFICIENT;
@@ -546,11 +589,13 @@ void rt_low_pass_filter_battery_voltage_current_power(void) {
       ui16_motor_current_accumulated_x5
           >> MOTOR_CURRENT_FILTER_COEFFICIENT;
 
-	// full battery power, considering the power loss also inside the battery and cables, because we are using the battery resistance
-  //
-  uint16_t ui16_battery_power_filtered_x50 = rt_vars.ui16_battery_current_filtered_x5 * rt_vars.ui16_battery_voltage_filtered_x10;
-  rt_vars.ui16_battery_power_filtered = ui16_battery_power_filtered_x50 / 50;
-
+  // full battery power, considering the power loss also inside the battery and cables, because we are using the battery resistance
+  //uint16_t ui16_battery_power_filtered_x50 = rt_vars.ui16_battery_current_filtered_x5 * rt_vars.ui16_battery_voltage_filtered_x10;
+  uint32_t ui32_battery_power_filtered_x50 = (uint32_t)rt_vars.ui16_battery_current_filtered_x5 * (uint32_t)rt_vars.ui16_battery_voltage_filtered_x10;
+  
+  //rt_vars.ui16_battery_power_filtered = ui16_battery_power_filtered_x50 / 50;
+  rt_vars.ui16_battery_power_filtered = (uint16_t)(ui32_battery_power_filtered_x50 / 50);
+  
   // P = R * I^2
   uint32_t ui32_temp = (uint32_t) rt_vars.ui16_battery_current_filtered_x5;
   ui32_temp = ui32_temp * ui32_temp; // I * I
@@ -560,7 +605,8 @@ void rt_low_pass_filter_battery_voltage_current_power(void) {
   ui32_temp /= 20; // now is _x50
   rt_vars.ui16_battery_power_loss = (uint16_t) (ui32_temp / 50);
 
-  rt_vars.ui16_full_battery_power_filtered_x50 = ui16_battery_power_filtered_x50 + (uint16_t) ui32_temp;
+  //rt_vars.ui16_full_battery_power_filtered_x50 = ui16_battery_power_filtered_x50 + (uint16_t) ui32_temp;
+  rt_vars.ui16_full_battery_power_filtered_x50 = (uint16_t)(ui32_battery_power_filtered_x50 + ui32_temp);
 }
 
 void rt_low_pass_filter_pedal_power(void) {
@@ -578,7 +624,8 @@ void rt_low_pass_filter_pedal_power(void) {
 
 void rt_calc_battery_voltage_soc(void) {
 	uint16_t ui16_fluctuate_battery_voltage_x10;
-
+	uint16_t ui16_battery_voltage_soc_x10_temp;
+	
 	// calculate flutuate voltage, that depends on the current and battery pack resistance
 	ui16_fluctuate_battery_voltage_x10 =
 			(uint16_t) ((((uint32_t) rt_vars.ui16_battery_pack_resistance_x1000)
@@ -648,7 +695,8 @@ static void rt_calc_odometer(void) {
 	uint8_t ui8_01km_flag = 0;
 
 	// calc at 1s rate
-	if (++ui8_1s_timer_counter >= 10) {
+	if ((++ui8_1s_timer_counter >= 10)
+	  && (ui8_motorErrorsIndex != ERROR_NOT_INIT)) {
 		ui8_1s_timer_counter = 0;
 
 		// calculate how many revolutions since last reset and convert to distance traveled
@@ -702,11 +750,17 @@ static void rt_calc_odometer(void) {
     rt_vars.battery_energy_h_km.ui32_sum_x50 = 0;
   }
 
-	if (ui8_01km_flag) {
+  if (ui8_01km_flag) {
     ui16_one_km_timeout_counter = 0;
     rt_vars.battery_energy_h_km.ui32_value_x100 = rt_vars.battery_energy_h_km.ui32_sum_x50 / BATTERY_ENERGY_H_KM_FACTOR_X2;
     rt_vars.battery_energy_h_km.ui32_value_x10 = rt_vars.battery_energy_h_km.ui32_value_x100 / 10;
     rt_vars.battery_energy_h_km.ui32_sum_x50 = 0;
+	
+	// average Wh used for remaining distance calculation
+	ui_vars.ui32_battery_energy_avg_cumulative_x100 += rt_vars.battery_energy_h_km.ui32_value_x100;
+	ui_vars.ui32_battery_energy_avg_cumulative_x100 -= ui_vars.ui16_battery_energy_avg_Wh_calc_x100;
+	ui_vars.ui16_battery_energy_avg_Wh_calc_x100 = ui_vars.ui32_battery_energy_avg_cumulative_x100
+		/ rt_vars.ui8_distance_for_avg_Wh_calc;
   }
 }
 
@@ -832,14 +886,13 @@ uint8_t rt_first_time_management(void) {
     ui8_motor_controller_init = 0;
 
     // reset Wh value if battery voltage is over ui16_battery_voltage_reset_wh_counter_x10 (value configured by user)
-    if (((uint32_t) ui_vars.ui16_adc_battery_voltage *
-    ADC_BATTERY_VOLTAGE_PER_ADC_STEP_X10000)
+    if (((uint32_t) ui_vars.ui16_adc_battery_voltage
+			* ADC_BATTERY_VOLTAGE_PER_ADC_STEP_X10000)
 			> ((uint32_t) ui_vars.ui16_battery_voltage_reset_wh_counter_x10
             * 1000)) {
 		ui_vars.ui32_wh_x10_offset = 0;
 
 #ifndef SW102
-		
 		// reset trip A at reset Wh
 		if((ui_vars.ui8_trip_a_auto_reset) && (!ui_vars.ui16_trip_a_auto_reset_hours)) {
 			ui8_g_configuration_trip_a_reset = 1;
@@ -850,11 +903,6 @@ uint8_t rt_first_time_management(void) {
 		}
 #endif
     }
-
-    //if (ui_vars.ui8_offroad_feature_enabled
-    //    && ui_vars.ui8_offroad_enabled_on_startup) {
-    //  ui_vars.ui8_offroad_mode = 1;
-    //}
   }
 
 	return ui8_status;
@@ -880,23 +928,25 @@ void rt_calc_battery_soc(void) {
 			- ((ui_vars.ui16_battery_voltage_soc_x10 - ui_vars.ui16_battery_low_voltage_cut_off_x10) * 100)
 			/ (ui_vars.ui16_battery_voltage_reset_wh_counter_x10 - ui_vars.ui16_battery_low_voltage_cut_off_x10)));
 		
-		if(ui_vars.ui8_battery_soc_percent_calculation == SOC_CALC_AUTO) { // Auto
+		if(ui_vars.ui8_battery_soc_percent_calculation == SOC_CALC_AUTO) {
 			if(!ui8_battery_soc_init_flag) {
-				uint8_t ui8_battery_soc_auto_reset_low = ui_vars.ui8_battery_soc_auto_reset;
-				if(ui8_g_battery_soc < ui_vars.ui8_battery_soc_auto_reset) {
-					ui8_battery_soc_auto_reset_low = ui8_g_battery_soc;
-				}
-				if(((100 - ui8_battery_soc_used[ui8_battery_soc_index]) < (ui8_g_battery_soc - ui8_battery_soc_auto_reset_low))
+				//uint8_t ui8_battery_soc_auto_reset_low = ui_vars.ui8_battery_soc_auto_reset;
+				//if(ui8_g_battery_soc < ui_vars.ui8_battery_soc_auto_reset) {
+				//	ui8_battery_soc_auto_reset_low = ui8_g_battery_soc;
+				//}
+				//if(((100 - ui8_battery_soc_used[ui8_battery_soc_index]) < (ui8_g_battery_soc - ui8_battery_soc_auto_reset_low))
+				if(((100 + ui_vars.ui8_battery_soc_auto_reset - ui8_battery_soc_used[ui8_battery_soc_index]) < ui8_g_battery_soc)
 					||((100 - ui8_battery_soc_used[ui8_battery_soc_index]) > (ui8_g_battery_soc + ui_vars.ui8_battery_soc_auto_reset))) {
 						ui8_g_configuration_battery_soc_reset = 1;
 				}
 			}
+			ui8_battery_soc_init_flag = 1;
 		}
-		else if(ui_vars.ui8_battery_soc_percent_calculation == SOC_CALC_VOLTS) { // Volts
+		else if(ui_vars.ui8_battery_soc_percent_calculation == SOC_CALC_VOLTS) {
 			ui8_g_configuration_battery_soc_reset = 1;
 		}
 		
-		ui8_battery_soc_init_flag = 1;
+		//ui8_battery_soc_init_flag = 1;
 	}
 }
 
@@ -925,7 +975,7 @@ void copy_rt_to_ui_vars(void) {
 	ui_vars.ui8_battery_current_x5 = rt_vars.ui8_battery_current_x5;
 	ui_vars.ui16_battery_power_loss = rt_vars.ui16_battery_power_loss;
 	ui_vars.ui8_motor_current_x5 = rt_vars.ui8_motor_current_x5;
-	ui_vars.ui8_throttle = rt_vars.ui8_throttle;
+	ui_vars.ui8_throttle_adc_map = rt_vars.ui8_throttle_adc_map;
 	ui_vars.ui16_adc_pedal_torque_sensor = rt_vars.ui16_adc_pedal_torque_sensor;
 	//ui_vars.ui8_pedal_weight_with_offset = rt_vars.ui8_pedal_weight_with_offset;
 	ui_vars.ui8_pedal_weight = rt_vars.ui8_pedal_weight;
@@ -962,11 +1012,13 @@ void copy_rt_to_ui_vars(void) {
 //#endif
 
 	ui_vars.ui8_braking = rt_vars.ui8_braking;
-	ui_vars.ui8_foc_angle = (((uint16_t) rt_vars.ui8_foc_angle) * 14) / 10; // each units is equal to 1.4 degrees ((360 degrees / 256) = 1.4)
+	//ui_vars.ui8_foc_angle = (((uint16_t) rt_vars.ui8_foc_angle) * 14) / 10; // each units is equal to 1.4 degrees ((360 degrees / 256) = 1.4)
+	ui_vars.ui8_foc_angle = rt_vars.ui8_foc_angle;
+	ui_vars.ui8_field_weakening_angle = rt_vars.ui8_field_weakening_angle;
 	ui_vars.ui16_adc_pedal_torque_delta = rt_vars.ui16_adc_pedal_torque_delta;
 	ui_vars.ui16_adc_pedal_torque_delta_boost = rt_vars.ui16_adc_pedal_torque_delta_boost;
 	ui_vars.ui8_pedal_torque_ADC_step_calc_x100 = rt_vars.ui8_pedal_torque_ADC_step_calc_x100;
-
+	
   // Features disabled with coaster brake enabled (safety)
   if((ui_vars.ui8_coast_brake_enable)&&(!rt_vars.ui8_coast_brake_enable)) {
 	ui_vars.ui8_walk_assist_feature_enabled = 0;
@@ -986,6 +1038,13 @@ void copy_rt_to_ui_vars(void) {
     rt_vars.ui32_wh_x10_100_percent = ui_vars.ui32_wh_x10_100_percent;
 	rt_vars.ui32_wh_x10_offset = ui_vars.ui32_wh_x10_offset;
 
+	if (ui_vars.ui8_distance_for_avg_Wh_calc != rt_vars.ui8_distance_for_avg_Wh_calc) {
+		// cumulative battery Wh/km for average calculation
+		ui_vars.ui32_battery_energy_avg_cumulative_x100 = ui_vars.ui16_battery_energy_avg_Wh_calc_x100
+			* (ui_vars.ui8_distance_for_avg_Wh_calc);
+		rt_vars.ui8_distance_for_avg_Wh_calc = ui_vars.ui8_distance_for_avg_Wh_calc;
+	}
+	
 #ifndef SW102
 	ui_vars.ui16_service_a_distance = rt_vars.ui16_service_a_distance;
 	ui_vars.ui16_service_b_distance = rt_vars.ui16_service_b_distance;
@@ -993,61 +1052,116 @@ void copy_rt_to_ui_vars(void) {
 	rt_vars.ui32_wh_x10_trip_a_offset = ui_vars.ui32_wh_x10_trip_a_offset;
 	rt_vars.ui32_wh_x10_trip_b_offset = ui_vars.ui32_wh_x10_trip_b_offset;
 #endif
-
-	// verify password
-	if(ui8_g_screen_init_flag) {
-		rt_vars.ui8_street_mode_throttle_enabled = ui_vars.ui8_street_mode_throttle_enabled;
-		rt_vars.ui8_street_mode_cruise_enabled = ui_vars.ui8_street_mode_cruise_enabled;
-	}
 	
-	if(ui_vars.ui8_password_changed) {
-		ui_vars.ui8_password_enabled = 1;
-	}
-		
-	if(((ui_vars.ui8_confirm_password)&&(ui_vars.ui8_password_confirmed))
-	  ||((!ui_vars.ui8_password_enabled)&&(!ui_vars.ui8_password_changed))
-	  ||(ui8_g_screen_init_flag)) {
+	// Bike menu initialization
+	if (ui8_g_screen_init_flag) {
+		rt_vars.ui8_offroad_or_street_edit_mode = ui_vars.ui8_offroad_or_street_edit_mode = STREET;
+		copy_street_to_bike();
 		rt_vars.ui8_wheel_max_speed = ui_vars.ui8_wheel_max_speed;
-		rt_vars.ui16_wheel_perimeter = ui_vars.ui16_wheel_perimeter;
-		rt_vars.ui16_motor_power_limit = ui_vars.ui16_motor_power_limit;
-		rt_vars.ui8_assist_whit_error_enabled = ui_vars.ui8_assist_whit_error_enabled;
 		rt_vars.ui8_throttle_feature_enabled = ui_vars.ui8_throttle_feature_enabled;
 		rt_vars.ui8_cruise_feature_enabled = ui_vars.ui8_cruise_feature_enabled;
-		
-		if(ui_vars.ui8_throttle_feature_enabled < ui_vars.ui8_street_mode_throttle_enabled)
-			ui_vars.ui8_street_mode_throttle_enabled = ui_vars.ui8_throttle_feature_enabled;
-		if(ui_vars.ui8_cruise_feature_enabled < ui_vars.ui8_street_mode_cruise_enabled)
-			ui_vars.ui8_street_mode_cruise_enabled = ui_vars.ui8_cruise_feature_enabled;
-		
-		ui8_g_screen_init_flag = 0;
+		rt_vars.ui8_password_enabled = ui_vars.ui8_password_enabled;
+	}
+	
+	// verify password enabled
+	if (ui_vars.ui8_password_changed) {
+		rt_vars.ui8_password_enabled = ui_vars.ui8_password_enabled = 1;
+	}
+	else if ((rt_vars.ui8_password_enabled != ui_vars.ui8_password_enabled)
+	  && (!ui_vars.ui8_password_enabled)
+	  && (!ui_vars.ui8_password_first_time)) {
+		ui_vars.ui8_password_enabled = rt_vars.ui8_password_enabled = 1;
 	}
 	else {
-		ui_vars.ui8_wheel_max_speed = rt_vars.ui8_wheel_max_speed;
-		ui_vars.ui16_wheel_perimeter = rt_vars.ui16_wheel_perimeter;
-		ui_vars.ui16_motor_power_limit = rt_vars.ui16_motor_power_limit;
-		ui_vars.ui8_assist_whit_error_enabled = rt_vars.ui8_assist_whit_error_enabled;
-		ui_vars.ui8_throttle_feature_enabled = rt_vars.ui8_throttle_feature_enabled;
-		ui_vars.ui8_cruise_feature_enabled = rt_vars.ui8_cruise_feature_enabled;
+		rt_vars.ui8_password_enabled = ui_vars.ui8_password_enabled;
 	}
 	
-	// verify speed limit
-	if(ui_vars.ui8_street_mode_speed_limit > ui_vars.ui8_wheel_max_speed)
-		ui_vars.ui8_street_mode_speed_limit = ui_vars.ui8_wheel_max_speed;
-	// verify motor power limit
-	if(ui_vars.ui16_target_max_battery_power > ui_vars.ui16_motor_power_limit)
-		ui_vars.ui16_target_max_battery_power = ui_vars.ui16_motor_power_limit;
-	if(ui_vars.ui16_street_mode_power_limit > ui_vars.ui16_motor_power_limit)
-		ui_vars.ui16_street_mode_power_limit = ui_vars.ui16_motor_power_limit;
+	// Bike menu edit
+	if (((ui_vars.ui8_confirm_password)&&(ui_vars.ui8_password_confirmed))
+	  ||((!ui_vars.ui8_password_enabled)&&(!ui_vars.ui8_password_changed))
+	  ||(ui8_g_screen_init_flag)) {
+		ui8_g_screen_init_flag = 0;
+		
+		rt_vars.ui16_wheel_perimeter = ui_vars.ui16_wheel_perimeter;
+		rt_vars.ui8_assist_with_error_enabled = ui_vars.ui8_assist_with_error_enabled;
+		rt_vars.ui8_street_mode_hotkey_enabled = ui_vars.ui8_street_mode_hotkey_enabled;
+		rt_vars.ui8_street_mode_enabled = ui_vars.ui8_street_mode_enabled;
+		rt_vars.ui8_street_mode_enabled_on_startup = ui_vars.ui8_street_mode_enabled_on_startup;
+		
+		if (ui_vars.ui8_offroad_or_street_edit_mode != rt_vars.ui8_offroad_or_street_edit_mode) {
+			if (ui_vars.ui8_offroad_or_street_edit_mode == STREET) {
+				copy_street_to_bike();
+			}
+			// OFFROAD
+			else {
+				copy_offroad_to_bike();
+			}
+			rt_vars.ui8_offroad_or_street_edit_mode = ui_vars.ui8_offroad_or_street_edit_mode;
+		}
+		
+		if (ui_vars.ui8_offroad_or_street_edit_mode == STREET) {
+			// verify speed limit
+			if (ui_vars.ui8_offroad_or_street_max_speed > ui_vars.ui8_wheel_max_speed) {
+				ui_vars.ui8_offroad_or_street_max_speed = ui_vars.ui8_wheel_max_speed;
+			}
+			rt_vars.ui8_street_mode_speed_limit = ui_vars.ui8_street_mode_speed_limit = ui_vars.ui8_offroad_or_street_max_speed;
+			// verify motor power limit
+			if	(ui_vars.ui16_offroad_or_street_max_power > ui_vars.ui16_motor_power_limit) {
+				ui_vars.ui16_offroad_or_street_max_power = ui_vars.ui16_motor_power_limit;
+			}
+			ui_vars.ui16_street_mode_power_limit = ui_vars.ui16_offroad_or_street_max_power;
+			// verify  throttle mode
+			if (ui_vars.ui8_offroad_or_street_throttle_enabled > ui_vars.ui8_throttle_feature_enabled) {
+				ui_vars.ui8_offroad_or_street_throttle_enabled = ui_vars.ui8_throttle_feature_enabled;
+			}
+			rt_vars.ui8_street_mode_throttle_enabled = ui_vars.ui8_street_mode_throttle_enabled = ui_vars.ui8_offroad_or_street_throttle_enabled;
+			// verify  cruise mode
+			if (ui_vars.ui8_offroad_or_street_cruise_enabled > ui_vars.ui8_cruise_feature_enabled) {
+				ui_vars.ui8_offroad_or_street_cruise_enabled = ui_vars.ui8_cruise_feature_enabled;
+			}
+			rt_vars.ui8_street_mode_cruise_enabled =  ui_vars.ui8_street_mode_cruise_enabled = ui_vars.ui8_offroad_or_street_cruise_enabled;			
+		}
+		// OFFROAD
+		else {
+			rt_vars.ui8_wheel_max_speed = ui_vars.ui8_wheel_max_speed = ui_vars.ui8_offroad_or_street_max_speed;
+			ui_vars.ui16_motor_power_limit = ui_vars.ui16_offroad_or_street_max_power;
+			
+			// verify  throttle mode
+			if (ui_vars.ui8_offroad_or_street_throttle_enabled < ui_vars.ui8_street_mode_throttle_enabled) {
+				ui_vars.ui8_offroad_or_street_throttle_enabled = ui_vars.ui8_street_mode_throttle_enabled;
+			}
+			rt_vars.ui8_throttle_feature_enabled = ui_vars.ui8_throttle_feature_enabled = ui_vars.ui8_offroad_or_street_throttle_enabled;
+			// verify  cruise mode
+			if (ui_vars.ui8_offroad_or_street_cruise_enabled < ui_vars.ui8_street_mode_cruise_enabled) {
+				ui_vars.ui8_offroad_or_street_cruise_enabled = ui_vars.ui8_street_mode_cruise_enabled;
+			}
+			rt_vars.ui8_cruise_feature_enabled = ui_vars.ui8_cruise_feature_enabled = ui_vars.ui8_offroad_or_street_cruise_enabled;
+		}
+	}
+	else {
+		ui_vars.ui16_wheel_perimeter = rt_vars.ui16_wheel_perimeter;
+		ui_vars.ui8_assist_with_error_enabled = rt_vars.ui8_assist_with_error_enabled;
+		ui_vars.ui8_street_mode_hotkey_enabled = rt_vars.ui8_street_mode_hotkey_enabled;
+		ui_vars.ui8_street_mode_enabled = rt_vars.ui8_street_mode_enabled;
+		ui_vars.ui8_street_mode_enabled_on_startup = rt_vars.ui8_street_mode_enabled_on_startup;
+		ui_vars.ui8_offroad_or_street_edit_mode = rt_vars.ui8_offroad_or_street_edit_mode = STREET;
+		copy_street_to_bike();
+	}
 	
-	// verify throttle & cruise in street mode
-	if(ui_vars.ui8_street_mode_throttle_enabled > ui_vars.ui8_throttle_feature_enabled)
-		ui_vars.ui8_street_mode_throttle_enabled = rt_vars.ui8_street_mode_throttle_enabled;
-	if(ui_vars.ui8_street_mode_cruise_enabled > ui_vars.ui8_cruise_feature_enabled)
-		ui_vars.ui8_street_mode_cruise_enabled = rt_vars.ui8_street_mode_cruise_enabled;
-
-	ui_vars.ui8_motor_power_limit_div25 = (uint8_t)(ui_vars.ui16_motor_power_limit / 25);
+	//
 	ui_vars.ui16_wheel_max_speed_x10 = ui_vars.ui8_wheel_max_speed * 10;
+	ui_vars.ui8_motor_power_limit_div25 = (uint8_t)(ui_vars.ui16_motor_power_limit / 25);
+	ui_vars.ui8_street_mode_power_limit_div25 = (uint8_t)(ui_vars.ui16_street_mode_power_limit / 25);
+	rt_vars.ui8_motor_power_limit_div25 = ui_vars.ui8_motor_power_limit_div25;
+	rt_vars.ui8_street_mode_power_limit_div25 = ui_vars.ui8_street_mode_power_limit_div25;
+	if (rt_vars.ui8_street_mode_enabled) {
+		ui_vars.ui16_max_motor_power = ui_vars.ui16_street_mode_power_limit;
+	}
+	else {
+		ui_vars.ui16_max_motor_power = ui_vars.ui16_motor_power_limit;
+	}
 	
+	//
 	rt_vars.ui16_battery_pack_resistance_x1000 = ui_vars.ui16_battery_pack_resistance_x1000;
 	rt_vars.ui8_riding_mode = ui_vars.ui8_riding_mode;
 	rt_vars.ui8_assist_level = ui_vars.ui8_assist_level;
@@ -1065,17 +1179,75 @@ void copy_rt_to_ui_vars(void) {
 	rt_vars.ui8_startup_assist = ui_vars.ui8_startup_assist;
 	rt_vars.ui8_battery_max_current = ui_vars.ui8_battery_max_current;
 	rt_vars.ui8_motor_max_current = ui_vars.ui8_motor_max_current;
-	rt_vars.ui8_motor_current_min_adc = ui_vars.ui8_motor_current_min_adc;
 	rt_vars.ui8_field_weakening_feature_enabled = ui_vars.ui8_field_weakening_feature_enabled;
-	rt_vars.ui8_target_max_battery_power_div25 = ui_vars.ui8_target_max_battery_power_div25;
+	//rt_vars.ui8_target_max_battery_power_div25 = ui_vars.ui8_target_max_battery_power_div25;
 	rt_vars.ui16_battery_low_voltage_cut_off_x10 =
 			ui_vars.ui16_battery_low_voltage_cut_off_x10;
 	rt_vars.ui16_battery_voltage_calibrate_percent_x10 =
 			ui_vars.ui16_battery_voltage_calibrate_percent_x10;
 	rt_vars.ui8_motor_type = ui_vars.ui8_motor_type;
-	rt_vars.ui8_motor_assistance_startup_without_pedal_rotation =
-			ui_vars.ui8_motor_assistance_startup_without_pedal_rotation;
+			
+	if(rt_vars.ui8_optional_ADC_function !=	ui_vars.ui8_optional_ADC_function) {
+		switch (ui_vars.ui8_optional_ADC_function) {
+			case NOT_IN_USE:
+				ui_vars.ui8_throttle_or_temperature_min_value_to_limit = 0;
+				ui_vars.ui8_throttle_or_temperature_max_value_to_limit = 0;
+			  break;
+			case TEMPERATURE_CONTROL:
+				ui_vars.ui8_throttle_or_temperature_min_value_to_limit = 
+					ui_vars.ui8_motor_temperature_min_limit_value;
+				ui_vars.ui8_throttle_or_temperature_max_value_to_limit =
+					ui_vars.ui8_motor_temperature_max_limit_value;
+			  break;
+			case THROTTLE_CONTROL:
+				ui_vars.ui8_throttle_or_temperature_min_value_to_limit = 
+					ui_vars.ui8_adc_throttle_min_value;
+				ui_vars.ui8_throttle_or_temperature_max_value_to_limit =
+					ui_vars.ui8_adc_throttle_max_value;
+		}
+	}
+	
 	rt_vars.ui8_optional_ADC_function =	ui_vars.ui8_optional_ADC_function;
+	
+	switch (rt_vars.ui8_optional_ADC_function) {
+		case TEMPERATURE_CONTROL:
+			if(rt_vars.ui8_throttle_or_temperature_min_value_to_limit !=
+			  ui_vars.ui8_throttle_or_temperature_min_value_to_limit) {
+				ui_vars.ui8_motor_temperature_min_limit_value =
+					ui_vars.ui8_throttle_or_temperature_min_value_to_limit;
+			}
+			if(rt_vars.ui8_throttle_or_temperature_max_value_to_limit !=
+			  ui_vars.ui8_throttle_or_temperature_max_value_to_limit) {
+				ui_vars.ui8_motor_temperature_max_limit_value =
+					ui_vars.ui8_throttle_or_temperature_max_value_to_limit;
+			}
+		  break;
+		case THROTTLE_CONTROL:
+			if(rt_vars.ui8_throttle_or_temperature_min_value_to_limit !=
+			  ui_vars.ui8_throttle_or_temperature_min_value_to_limit) {
+				ui_vars.ui8_adc_throttle_min_value =
+					ui_vars.ui8_throttle_or_temperature_min_value_to_limit;
+			}
+			if(rt_vars.ui8_throttle_or_temperature_max_value_to_limit !=
+			  ui_vars.ui8_throttle_or_temperature_max_value_to_limit) {
+				ui_vars.ui8_adc_throttle_max_value =
+					ui_vars.ui8_throttle_or_temperature_max_value_to_limit;
+			}
+		  break;
+		default:
+		  break;
+	}
+	
+	rt_vars.ui8_motor_temperature_min_limit_value = ui_vars.ui8_motor_temperature_min_limit_value;
+	rt_vars.ui8_motor_temperature_max_limit_value = ui_vars.ui8_motor_temperature_max_limit_value;
+	rt_vars.ui8_adc_throttle_min_value = ui_vars.ui8_adc_throttle_min_value;
+	rt_vars.ui8_adc_throttle_max_value = ui_vars.ui8_adc_throttle_max_value;
+	
+	rt_vars.ui8_throttle_or_temperature_min_value_to_limit =
+			ui_vars.ui8_throttle_or_temperature_min_value_to_limit;
+	rt_vars.ui8_throttle_or_temperature_max_value_to_limit =
+			ui_vars.ui8_throttle_or_temperature_max_value_to_limit;
+	
 	rt_vars.ui8_screen_temperature = ui_vars.ui8_screen_temperature;
 	rt_vars.ui8_temperature_sensor_type = ui_vars.ui8_temperature_sensor_type;
 	rt_vars.ui8_battery_soc_auto_reset = ui_vars.ui8_battery_soc_auto_reset;
@@ -1085,19 +1257,36 @@ void copy_rt_to_ui_vars(void) {
 	rt_vars.ui8_startup_motor_power_boost_feature_enabled =
 			ui_vars.ui8_startup_motor_power_boost_feature_enabled;
 	rt_vars.ui8_startup_boost_at_zero = ui_vars.ui8_startup_boost_at_zero;
-	rt_vars.ui8_motor_temperature_min_value_to_limit =
-			ui_vars.ui8_motor_temperature_min_value_to_limit;
-	rt_vars.ui8_motor_temperature_max_value_to_limit =
-			ui_vars.ui8_motor_temperature_max_value_to_limit;
-
-  rt_vars.ui8_torque_sensor_calibration_feature_enabled = ui_vars.ui8_torque_sensor_calibration_feature_enabled;
-  rt_vars.ui8_startup_assist_feature_enabled = ui_vars.ui8_startup_assist_feature_enabled;
+	rt_vars.ui8_extended_boost_multiplier = ui_vars.ui8_extended_boost_multiplier;
+	rt_vars.ui8_extended_boost_threshold = ui_vars.ui8_extended_boost_threshold;
+	rt_vars.ui8_extended_boost_ramp_down = ui_vars.ui8_extended_boost_ramp_down;
+	rt_vars.ui8_power_based_reference_voltage = ui_vars.ui8_power_based_reference_voltage;
+	
+	rt_vars.ui8_extended_boost_enabled = ui_vars.ui8_extended_boost_enabled;
+	ui_vars.ui8_adc_pedal_torque_increment = rt_vars.ui8_adc_pedal_torque_increment;
+	if(rt_vars.ui8_extended_boost_enabled) {
+		//ui_vars.ui8_extended_boost_assist_increment = rt_vars.ui8_extended_boost_assist_increment;
+		rt_vars.ui8_motor_assistance_startup_without_pedal_rotation = 0; // disabled
+	}
+	else {
+		//ui_vars.ui8_extended_boost_assist_increment = 0;
+		rt_vars.ui8_motor_assistance_startup_without_pedal_rotation =
+			ui_vars.ui8_motor_assistance_startup_without_pedal_rotation;
+	}
+	
+	rt_vars.ui8_torque_sensor_calibration_feature_enabled = ui_vars.ui8_torque_sensor_calibration_feature_enabled;
   
-  rt_vars.ui8_street_mode_enabled = ui_vars.ui8_street_mode_enabled;
-  rt_vars.ui8_street_mode_speed_limit = ui_vars.ui8_street_mode_speed_limit;
-  rt_vars.ui8_street_mode_power_limit_div25 = ui_vars.ui8_street_mode_power_limit_div25;
-  rt_vars.ui8_street_mode_throttle_enabled = ui_vars.ui8_street_mode_throttle_enabled;
-  rt_vars.ui8_street_mode_cruise_enabled = ui_vars.ui8_street_mode_cruise_enabled;
+	if(rt_vars.ui8_assist_with_error_enabled) {
+		if(ui_vars.ui8_startup_assist_feature_enabled >= SEMI_STARTUP) {
+			rt_vars.ui8_startup_assist_feature_enabled = MANUAL_STARTUP;
+		}
+		else {
+			rt_vars.ui8_startup_assist_feature_enabled = ui_vars.ui8_startup_assist_feature_enabled;
+		}
+	}
+	else {
+		rt_vars.ui8_startup_assist_feature_enabled = ui_vars.ui8_startup_assist_feature_enabled;
+	}
   
   if(rt_vars.ui8_motor_deceleration_adjustment == 100)
 	ui_vars.ui8_pedal_cadence_fast_stop = 1;
@@ -1105,6 +1294,7 @@ void copy_rt_to_ui_vars(void) {
 	ui_vars.ui8_pedal_cadence_fast_stop = 0;
 
   rt_vars.ui8_pedal_cadence_fast_stop = ui_vars.ui8_pedal_cadence_fast_stop;
+  rt_vars.ui8_torque_modes_based_on_power = ui_vars.ui8_torque_modes_based_on_power;
   rt_vars.ui8_coast_brake_adc = ui_vars.ui8_coast_brake_adc;
   rt_vars.ui8_throttle_virtual = ui_vars.ui8_throttle_virtual;
   rt_vars.ui8_torque_sensor_adc_threshold = ui_vars.ui8_torque_sensor_adc_threshold;
@@ -1147,6 +1337,15 @@ void copy_rt_to_ui_vars(void) {
 	ui8_adc_torque_middle_offset_adj = ADC_TORQUE_SENSOR_MIDDLE_OFFSET_ADJ;
 	rt_vars.ui8_adc_pedal_torque_offset_adj = ui_vars.ui8_adc_pedal_torque_offset_adj;
   }
+  // if the adc pedal torque offset value is negative
+  // assistance startup without pedal rotation disabled
+  if (rt_vars.ui8_adc_pedal_torque_offset_adj <= (ui8_adc_torque_middle_offset_adj - ui8_adc_torque_calibration_offset)) {
+	rt_vars.ui8_motor_assistance_startup_without_pedal_rotation = 0; // disabled
+  }
+  else {
+  	rt_vars.ui8_motor_assistance_startup_without_pedal_rotation =
+			ui_vars.ui8_motor_assistance_startup_without_pedal_rotation;
+  }
 }
 
 /// must be called from main() idle loop
@@ -1185,8 +1384,9 @@ void communications(void) {
 
   // process rx package if we are simulating or the UART had a packet
   if ((g_motor_init_state == MOTOR_INIT_SIMULATING) || p_rx_buffer) {
-    if (g_motor_init_state == MOTOR_INIT_SIMULATING)
-      parse_simmotor();
+    if (g_motor_init_state == MOTOR_INIT_SIMULATING) {
+      //parse_simmotor();
+	}
     else if (p_rx_buffer) {
       // now process rx data
       ui8_frame = (frame_type_t) p_rx_buffer[2];
@@ -1226,7 +1426,7 @@ void communications(void) {
             rt_vars.ui16_adc_battery_voltage = p_rx_buffer[3] | (((uint16_t) (p_rx_buffer[4] & 0x30)) << 4);
             rt_vars.ui8_battery_current_x5 = p_rx_buffer[5];
             ui16_temp = ((uint16_t) p_rx_buffer[6]) | (((uint16_t) p_rx_buffer[7] << 8));
-            rt_vars.ui16_wheel_speed_x10 = ui16_temp & 0x7ff; // 0x7ff = 204.7km/h as the other bits are used for other things
+            rt_vars.ui16_wheel_speed_x10 = ui16_temp & 0x3ff; // 0x3ff = 102.3km/h as the other bits are used for other things
 			if (rt_vars.ui16_wheel_speed_x10 > 999)
 				rt_vars.ui16_wheel_speed_x10 = 999; // max value to display field 99.9 km/h
 			
@@ -1236,29 +1436,36 @@ void communications(void) {
 			ui8_speed_limit_high_flag = (ui8_temp & 16) >> 4;
             ui8_voltage_cut_off_flag = (ui8_temp & 32) >> 5;
 			ui8_voltage_shutdown_flag = (ui8_temp & 64) >> 6;
-			//rt_vars.available = (ui8_temp & 128) >> 7;
+			ui8_pwm_frequency_flag = (ui8_temp & 128) >> 7;
+			if (ui8_pwm_frequency_flag)
+				ui_vars.ui8_pwm_frequency = 19;
+			else
+				ui_vars.ui8_pwm_frequency = 18;
+			
 			
 			rt_vars.ui8_adc_throttle = p_rx_buffer[9];
-
-            if (rt_vars.ui8_optional_ADC_function == TEMPERATURE_CONTROL) {
-				rt_vars.ui8_motor_temperature = p_rx_buffer[10];
-				if (rt_vars.ui8_temperature_sensor_type == TMP36) {
-					if (rt_vars.ui8_motor_temperature > 50) {
-						rt_vars.ui8_motor_temperature = rt_vars.ui8_motor_temperature - 50;
+			
+			switch (ui_vars.ui8_optional_ADC_function) {
+				case NOT_IN_USE:
+					rt_vars.ui8_motor_temperature = 0;
+					rt_vars.ui8_throttle_adc_map = 0;
+				  break;
+				case TEMPERATURE_CONTROL:
+					rt_vars.ui8_motor_temperature = p_rx_buffer[10];
+					if (rt_vars.ui8_temperature_sensor_type == TMP36) {
+						if (rt_vars.ui8_motor_temperature > 50) {
+							rt_vars.ui8_motor_temperature = rt_vars.ui8_motor_temperature - 50;
+						}
+						else {
+							rt_vars.ui8_motor_temperature = 0;
+						}
 					}
-					else {
-						rt_vars.ui8_motor_temperature = 0;
-					}
-				}
-				rt_vars.ui8_throttle = 0;
-            }
-			else if (rt_vars.ui8_optional_ADC_function == THROTTLE_CONTROL) {
-				rt_vars.ui8_motor_temperature = 0;
-				rt_vars.ui8_throttle = p_rx_buffer[10];
-            }
-			else {
-				rt_vars.ui8_motor_temperature = 0;
-				rt_vars.ui8_throttle = 0;
+					rt_vars.ui8_throttle_adc_map = 0;
+				  break;
+				case THROTTLE_CONTROL:
+					rt_vars.ui8_motor_temperature = 0;
+					rt_vars.ui8_throttle_adc_map = p_rx_buffer[10];
+				 break;
 			}
 			
             rt_vars.ui16_adc_pedal_torque_sensor = ((uint16_t) p_rx_buffer[11]) | (((uint16_t) (p_rx_buffer[7] & 0xC0)) << 2);
@@ -1268,13 +1475,18 @@ void communications(void) {
             rt_vars.ui8_pedal_cadence = p_rx_buffer[14];
 
             rt_vars.ui8_duty_cycle = p_rx_buffer[15];
-			// test
-			// rt_vars.ui8_motor_efficiency = rt_vars.ui8_duty_cycle;
-			// to do
-			rt_vars.ui8_motor_efficiency = 0;
 			
             rt_vars.ui16_motor_speed_erps = ((uint16_t) p_rx_buffer[16]) | ((uint16_t) p_rx_buffer[17] << 8);
-            rt_vars.ui8_foc_angle = p_rx_buffer[18];
+            
+			if (g_tsdz2_firmware_version.patch >= 52) {
+				ui8_temp = p_rx_buffer[18];
+				rt_vars.ui8_foc_angle = ui8_temp & 0x0F;
+				rt_vars.ui8_field_weakening_angle = ((ui8_temp & 0x30) >> 4);
+				// bits available
+			}
+			else {
+				rt_vars.ui8_foc_angle = p_rx_buffer[18];
+			}
 			
             rt_vars.ui8_error_states = p_rx_buffer[19];
             rt_vars.ui8_motor_current_x5 = p_rx_buffer[20];
@@ -1283,6 +1495,22 @@ void communications(void) {
                 (((uint32_t) p_rx_buffer[22]) << 8) | (((uint32_t) p_rx_buffer[23]) << 16);
             ui_vars.ui32_wheel_speed_sensor_tick_counter = ui32_wheel_speed_sensor_tick_temp;
 			
+			// calculate pedal torque ADC step for human power
+			uint16_t ui16_adc_pedal_torque_range_target_max = ADC_TORQUE_SENSOR_RANGE_TARGET_MIN
+				* (100 + rt_vars.ui8_adc_pedal_torque_range_adj) / 100;
+		
+			uint16_t ui16_adc_pedal_torque_delta_with_weight = (((((ADC_TORQUE_SENSOR_TARGET_WITH_WEIGHT * ADC_TORQUE_SENSOR_RANGE_TARGET_MIN) / ADC_TORQUE_SENSOR_RANGE_TARGET)
+				* (100 + rt_vars.ui8_adc_pedal_torque_range_adj) / 100)
+				* (ADC_TORQUE_SENSOR_TARGET_WITH_WEIGHT - ui8_adc_torque_calibration_offset + rt_vars.ui8_adc_pedal_torque_offset_adj
+				- ((((ui8_adc_torque_middle_offset_adj * 2) - ui8_adc_torque_calibration_offset - rt_vars.ui8_adc_pedal_torque_offset_adj) * ADC_TORQUE_SENSOR_TARGET_WITH_WEIGHT)
+				/ ADC_TORQUE_SENSOR_RANGE_TARGET))) / ADC_TORQUE_SENSOR_TARGET_WITH_WEIGHT);
+
+			ui8_pedal_torque_ADC_step_adv_calc_x100 = (uint8_t)((uint16_t)(((WEIGHT_ON_PEDAL_FOR_STEP_CALIBRATION * 167)
+				/ ((ui16_adc_pedal_torque_delta_with_weight * ui16_adc_pedal_torque_range_target_max)
+				/ (ui16_adc_pedal_torque_range_target_max - (((ui16_adc_pedal_torque_range_target_max - ui16_adc_pedal_torque_delta_with_weight) * 10)
+				/ ui8_adc_pedal_torque_angle_adj_array[rt_vars.ui8_adc_pedal_torque_angle_adj_index])))
+				* rt_vars.ui8_pedal_torque_per_10_bit_ADC_step_adv_x100) / PEDAL_TORQUE_PER_10_BIT_ADC_STEP_BASE_X100)) + 1;
+	
 			if(rt_vars.ui8_torque_sensor_calibration_feature_enabled) {
 				rt_vars.ui16_pedal_power_x10 = (rt_vars.ui16_adc_pedal_torque_delta * ui8_pedal_torque_ADC_step_adv_calc_x100 * rt_vars.ui8_pedal_cadence) / 96;
 			}
@@ -1291,10 +1519,20 @@ void communications(void) {
 			}
 			
 			rt_vars.ui16_adc_pedal_torque_delta_boost = ((uint16_t) p_rx_buffer[24]) | ((uint16_t) p_rx_buffer[25] << 8);
+
+			if (g_tsdz2_firmware_version.patch >= 52) {
+				//rt_vars.ui8_extended_boost_assist_increment = p_rx_buffer[26];
+				rt_vars.ui8_adc_pedal_torque_increment = p_rx_buffer[26];
+			}
+			else {
+				//ui16_temp = (uint16_t) p_rx_buffer[26];
+				//rt_vars.ui16_adc_battery_current = ui16_temp | ((uint16_t) ((p_rx_buffer[7] & 0x18) << 5)); // ???
+				rt_vars.ui16_adc_battery_current = (uint16_t) p_rx_buffer[26];
+				//rt_vars.ui8_extended_boost_assist_increment = 0;
+				rt_vars.ui8_adc_pedal_torque_increment = 0;
+			}
 			
-            ui16_temp = (uint16_t) p_rx_buffer[26];
-            rt_vars.ui16_adc_battery_current = ui16_temp | ((uint16_t) ((p_rx_buffer[7] & 0x18) << 5));
-            break;
+			break;
 
           case FRAME_TYPE_FIRMWARE_VERSION:
             rt_vars.ui8_error_states = p_rx_buffer[3];
@@ -1494,22 +1732,24 @@ static void motor_init(void) {
   }
 }
 
-// filter
-uint16_t filter(uint16_t ui16_new_value, uint16_t ui16_old_value, uint8_t ui8_alpha) {
-    if (ui8_alpha < 11) {
-        uint32_t ui32_temp_new = (uint32_t) ui16_new_value * (uint32_t)(10U - ui8_alpha);
-		uint32_t ui32_temp_old = (uint32_t) ui16_old_value * (uint32_t) ui8_alpha;
-        uint16_t ui16_filtered_value = (uint16_t)((ui32_temp_new + ui32_temp_old + 5U) / 10U);
+void copy_street_to_bike(void) {
+	ui_vars.ui8_offroad_or_street_max_speed
+		= ui_vars.ui8_street_mode_speed_limit;
+	ui_vars.ui16_offroad_or_street_max_power
+		= ui_vars.ui16_street_mode_power_limit;
+	ui_vars.ui8_offroad_or_street_throttle_enabled
+		= ui_vars.ui8_street_mode_throttle_enabled;
+	ui_vars.ui8_offroad_or_street_cruise_enabled
+		= ui_vars.ui8_street_mode_cruise_enabled;
+}
 
-        if (ui16_filtered_value == ui16_old_value) {
-            if (ui16_filtered_value < ui16_new_value)
-				ui16_filtered_value++;
-			else if (ui16_filtered_value > ui16_new_value)
-				ui16_filtered_value--;
-        }
-
-        return ui16_filtered_value;
-    } else {
-        return 0;
-    }
+void copy_offroad_to_bike(void) {
+	ui_vars.ui8_offroad_or_street_max_speed
+		= ui_vars.ui8_wheel_max_speed;
+	ui_vars.ui16_offroad_or_street_max_power
+		= ui_vars.ui16_motor_power_limit;
+	ui_vars.ui8_offroad_or_street_throttle_enabled
+		= ui_vars.ui8_throttle_feature_enabled;
+	ui_vars.ui8_offroad_or_street_cruise_enabled
+		= ui_vars.ui8_cruise_feature_enabled;
 }

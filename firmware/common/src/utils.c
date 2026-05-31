@@ -10,6 +10,27 @@
 #include <stdio.h>
 #include "utils.h"
 
+// filter
+uint16_t filter(uint16_t ui16_new_value, uint16_t ui16_old_value, uint8_t ui8_alpha) {
+    if (ui8_alpha < 11) {
+        uint32_t ui32_temp_new = (uint32_t) ui16_new_value * (uint32_t)(10U - ui8_alpha);
+		uint32_t ui32_temp_old = (uint32_t) ui16_old_value * (uint32_t) ui8_alpha;
+        uint16_t ui16_filtered_value = (uint16_t)((ui32_temp_new + ui32_temp_old + 5U) / 10U);
+
+        if (ui16_filtered_value == ui16_old_value) {
+            if (ui16_filtered_value < ui16_new_value)
+				ui16_filtered_value++;
+			else if (ui16_filtered_value > ui16_new_value)
+				ui16_filtered_value--;
+        }
+
+        return ui16_filtered_value;
+    } else {
+        return 0;
+    }
+}
+
+
 int32_t map(int32_t x, int32_t in_min, int32_t in_max, int32_t out_min,
 		int32_t out_max) {
 	// if input is smaller/bigger than expected return the min/max out ranges value
