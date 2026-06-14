@@ -27,9 +27,15 @@ python3 flash860c.py firmware.bin --flash --port /dev/ttyACM0 --yes   # actually
 - `--flash` requires **both** `--port` and `--yes` or it refuses.
 - `--corrupt-block N` — send block N with a bad checksum first (probe the NAK
   path), print the display's reply, then send it correctly.
-- Options: `--base` (load addr, default `0x08004000`), `--ready-byte` (`0xA5`),
-  `--ack-byte` (`0x85`), `--nak-byte` (`0x8F`), `--poll-ms`, `--ready-timeout`,
-  `--block-timeout`, `--retries`.
+- Options: `--ready-byte` (`0xA5`), `--ack-byte` (`0x85`), `--nak-byte` (`0x8F`),
+  `--poll-ms`, `--ready-timeout`, `--block-timeout`, `--retries`,
+  `--corrupt-block N`.
+- `--base` is the protocol **address-field** base (default `0x08004000`), **not**
+  the physical load address — the app runs at `0x08005000` and the bootloader
+  applies a `+0x1000` mapping. **Leave it at `0x4000`** (matches the factory tool
+  byte-for-byte); changing it shifts the image and bricks the boot. The image
+  must fit the bootloader's **512 KiB write cap** (`0x5000…0x80000`), which holds
+  even on the 1 MB GD32F303 V1.5. See `docs/bootloader-uart-protocol.md`.
 
 > ✅ Verified flashing real 860C firmware on hardware (handshake, ACK/NAK-resend,
 > checksum validation all confirmed).

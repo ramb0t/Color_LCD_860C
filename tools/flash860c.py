@@ -24,7 +24,11 @@ Usage:
 """
 import sys, argparse, struct, time
 
-BASE   = 0x08004000      # firmware load address
+BASE   = 0x08004000      # protocol ADDRESS-FIELD base (NOT the physical load addr).
+                         # The app physically runs at 0x08005000; the bootloader
+                         # applies a +0x1000 mapping (field 0x4000 -> phys 0x5000).
+                         # 0x4000 is correct and matches the factory tool byte-for-byte.
+                         # Do NOT change to 0x5000 -- it shifts the image and bricks boot.
 BLK    = 2048            # payload bytes per block
 CRLF   = b"\x0d\x0a"
 SYNC   = 0x5A
@@ -81,7 +85,10 @@ def verify(stream, base):
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("binary")
-    ap.add_argument("--base", default=hex(BASE), help="load address (default 0x08004000)")
+    ap.add_argument("--base", default=hex(BASE),
+                    help="protocol address-field base (default 0x08004000). "
+                         "NOT the physical load addr (app runs at 0x5000; bootloader maps +0x1000). "
+                         "Leave at 0x4000 -- changing it bricks the boot.")
     ap.add_argument("--preamble", type=int, default=134)
     ap.add_argument("--poll-ms", type=float, default=31.0, help="0x5A poll interval while waiting")
     ap.add_argument("--ready-byte", default="0xA5", help="display 'ready' byte (default 0xA5)")
@@ -104,7 +111,8 @@ def main():
     stream,nblk=build_stream(fw, base=base, preamble=a.preamble)
     ok,data=verify(stream, base)
     print(f"firmware : {a.binary}  {len(fw)} bytes")
-    print(f"load base: {hex(base)}   blocks: {nblk} data (last=F1F1) + 2 terminators")
+    print(f"field base: {hex(base)} (app runs at 0x08005000, +0x1000 mapping)   "
+          f"blocks: {nblk} data (last=F1F1) + 2 terminators")
     print(f"stream   : {len(stream)} bytes   self-verify: {'OK' if ok else 'FAILED'} ({data} data blocks)")
     if not ok:
         print("ABORT: stream failed self-verification"); sys.exit(1)
