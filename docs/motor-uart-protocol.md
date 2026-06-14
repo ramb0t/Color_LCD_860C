@@ -48,10 +48,19 @@ Both directions use the same structure. Only the start byte differs.
 **Total bytes on the wire = `len + 2`.**
 
 The display's RX state machine (`usart1.c`) reads the start byte, then `len`,
-then exactly `len` further bytes (payload + the two CRC bytes), then validates
-the CRC before accepting the frame. It holds only **one** received packet at a
-time — a new packet that arrives before the previous one is consumed is dropped.
-So the emulator should send at most one reply per request and avoid flooding.
+then exactly `len` further bytes — these are the `type` byte, the payload, and
+the two CRC bytes (`1 + (len-3) + 2 = len`) — then validates the CRC before
+accepting the frame. It holds only **one** received packet at a time — a new
+packet that arrives before the previous one is consumed is dropped. So the
+emulator should send at most one reply per request and avoid flooding.
+
+> **Frame-size limit.** The RX buffer is `UART_NUMBER_DATA_BYTES_TO_RECEIVE`
+> = 29 bytes, so the largest frame the display can receive is `len = 27`
+> (29 bytes on the wire — exactly the `PERIODIC` frame). The current RX state
+> machine does **not** bounds-check the `len` byte against the buffer, so a
+> motor/emulator must never send `len > 27`. See
+> [`docs/uart-improvements.md`](uart-improvements.md) for the overflow this
+> creates on a noisy line.
 
 ### CRC
 
