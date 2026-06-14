@@ -1,0 +1,11 @@
+# build artifacts
+_build/
+src/
+*.o
+*.elf
+*.bin
+*.lst
+*.map
+
+# captured flash images (proprietary manufacturer bootloader/firmware -- never commit)
+*.hex
