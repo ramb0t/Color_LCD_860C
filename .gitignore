@@ -1,3 +1,8 @@
 # Python
 __pycache__/
 *.pyc
+
+# AD3 logic-analyzer captures (large) and decoded artifacts
+log/
+*.u8
+*.npy
